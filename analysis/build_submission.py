@@ -546,6 +546,45 @@ def main():
     (root / "submission.json").write_text(
         json.dumps(submission, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
+    # The frontend must show the same numbers this file reports. Rather than
+    # reimplementing the correction rules in TypeScript and hoping the two stay
+    # in step, export them once from here and have the app read them. If a rule
+    # changes, both outputs change together.
+    manifest = {
+        "generated_from": "analysis/build_submission.py",
+        "api_key": API_KEY,
+        "reference_moment": REFERENCE.isoformat(),
+        "rules": {
+            "area": {"note": "carpet_area and super_built_up_area below the "
+                             "cutoff are square metres, not square feet",
+                     "sqm_cutoff": SQM_CUTOFF, "sqft_per_sqm": SQFT_PER_SQM},
+            "project_price": {"note": "display units: below the switch means "
+                                      "crores, at or above means lakhs",
+                              "switch": DISPLAY_UNIT_SWITCH,
+                              "below_multiplier": 1e7,
+                              "at_or_above_multiplier": 1e5},
+            "rental_deposit": {"note": "deposit below the cutoff is a count of "
+                                       "months of rent", "months_cutoff": 100},
+            "dedup": {"metres": DEDUP_METRES, "carpet_tolerance": 0.02,
+                      "also_requires": ["bedroom", "floor", "facing_direction"]},
+        },
+        "flags": {
+            "corrupt_listing_ids": corrupt,
+            "fake_listing_ids": fake,
+            "fake_contacts": ring_contacts,
+            "sqm_listing_ids": sorted(SQM_IDS),
+            "duplicate_listing_ids": sorted({i for pk in merged_pairs for i in pk}),
+            "deposit_in_months_rental_ids": DEPOSIT_MONTH_IDS,
+            "projects_with_wrong_listing_count": q10_ids,
+        },
+        "answers": answers,
+    }
+    app_public = root / "app" / "public"
+    app_public.mkdir(parents=True, exist_ok=True)
+    (app_public / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"manifest: {(app_public / 'manifest.json').resolve()}")
+
     print("answers")
     for k, v in answers.items():
         print(f"  {k:36s} {v if not isinstance(v, list) else str(len(v)) + ' ids'}")
