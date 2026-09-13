@@ -39,7 +39,7 @@ CANDIDATE = {
     "name": "Bhavishya Gulati",
     "email": "bhavishya.20234049@mnnit.ac.in",
     "repo_url": "https://github.com/Bhavgulati/ivy-assignment",
-    "demo_url": "",
+    "demo_url": "https://ivy-assignment-sepia.vercel.app",
 }
 API_KEY = "IVY26-C947D32E59D7"
 
