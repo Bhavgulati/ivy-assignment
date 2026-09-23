@@ -222,3 +222,31 @@ tbody tr:hover { background: var(--panel-2); }
   .two-col { grid-template-columns: 1fr; }
   .toggles { margin-left: 0; }
 }
+
+/* ---- charts ---- */
+.chart-block { margin: 30px 0 38px; }
+.chart-block h3 { color: var(--text); text-transform: none; letter-spacing: -.01em;
+                  font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.chart-block .sub { margin-bottom: 16px; }
+.chart {
+  margin: 0; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px 14px 10px;
+}
+.chart svg { width: 100%; height: auto; display: block; }
+.chart circle { transition: r .12s ease; }
+.chart circle:hover { r: 6; }
+.legend {
+  display: flex; flex-wrap: wrap; gap: 18px; padding: 12px 4px 4px;
+  font-size: 12px; color: var(--dim);
+}
+.legend span { display: flex; align-items: center; gap: 7px; }
+.legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+/* ---- polish: skeletons and motion ---- */
+@media (prefers-reduced-motion: no-preference) {
+  .card, .stat, .finding, .chart { animation: rise .28s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(5px); } }
+  .card, .save, .links a, button { transition: border-color .15s, background .15s,
+                                               color .15s, transform .12s; }
+  .card:hover { transform: translateY(-1px); }
+}

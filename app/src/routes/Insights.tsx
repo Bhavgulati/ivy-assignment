@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import type { Listing } from "../api/types";
+import type { Listing, Project } from "../api/types";
 import { useCollection, useManifest } from "../state/data";
 import { correctListing, inr, inrExact, parseIst, titleCase } from "../core/corrections";
 import { ErrorBox, Progress, Stat } from "../components/bits";
+import { Histogram, LogScatter, Scatter2D } from "../components/charts";
 
 // The documented /v1/analytics/summary is a 404, so every figure here is
 // computed in the browser from the full collection. That is eighty-two requests
@@ -22,6 +23,7 @@ function median(xs: number[]) {
 export default function Insights() {
   const { manifest, flags } = useManifest();
   const { rows, progress, done, error } = useCollection<Listing>("/v1/listings");
+  const projects = useCollection<Project>("/v1/projects", done);
 
   const c = useMemo(
     () => (manifest && flags ? rows.map((r) => correctListing(r, manifest, flags)) : []),
@@ -74,6 +76,79 @@ export default function Insights() {
       lastWeek,
     };
   }, [c, manifest]);
+
+  // The three plots below are the pictures of three findings. Each is computed
+  // from the same corrected records the figures above use, so a reader can
+  // check one against the other.
+  const charts = useMemo(() => {
+    if (!c.length || !manifest) return null;
+    const k = manifest.rules.area.sqft_per_sqm;
+
+    // 1. what the square-metre records do to rupees per square foot
+    const live2 = c.filter(
+      (x) => x.raw.is_live && !x.corrupt && !x.fake &&
+             x.raw.price > 0 && x.raw.carpet_area > 0
+    );
+    const corrected = live2.map((x) => x.raw.price / x.carpet_area);
+    const uncorrected = live2.map(
+      (x) => x.raw.price / (x.unitFixed ? x.carpet_area / k : x.carpet_area)
+    );
+
+    // 2. the project price field against what its own listings actually cost
+    const byPid = new Map<string, number>();
+    for (const x of c) {
+      if (!x.raw.project_id || x.raw.price <= 0 || x.corrupt) continue;
+      byPid.set(x.raw.project_id, Math.max(byPid.get(x.raw.project_id) ?? 0, x.raw.price));
+    }
+    const projPts = projects.rows
+      .filter((p) => p.price_max > 0 && byPid.has(p.project_id))
+      .map((p) => ({
+        x: p.price_max,
+        y: byPid.get(p.project_id)!,
+        id: p.project_id,
+        group: p.price_max >= 10 ? "stored in lakhs (27)" : "stored in crores (431)",
+        color: p.price_max >= 10 ? "#c98a3c" : "#4da3a3",
+      }));
+
+    // 3. every phone number, by how much of its portfolio is verified and how
+    //    its prices compare with the local median
+    const base = new Map<string, number[]>();
+    for (const x of c) {
+      if (x.corrupt || x.raw.price <= 0 || x.carpet_area <= 0) continue;
+      const key = `${x.raw.locality}|${x.raw.bedroom}`;
+      const arr = base.get(key) ?? [];
+      arr.push(x.raw.price / x.carpet_area);
+      base.set(key, arr);
+    }
+    const med = new Map<string, number>();
+    base.forEach((v, key) => { if (v.length >= 8) med.set(key, median(v)); });
+
+    const byContact = new Map<string, { n: number; ver: number; ratios: number[] }>();
+    for (const x of c) {
+      if (x.corrupt || !x.raw.posted_by_contact) continue;
+      const e = byContact.get(x.raw.posted_by_contact) ?? { n: 0, ver: 0, ratios: [] };
+      e.n += 1;
+      if (x.raw.is_verified) e.ver += 1;
+      const m = med.get(`${x.raw.locality}|${x.raw.bedroom}`);
+      if (m && x.raw.price > 0 && x.carpet_area > 0) {
+        e.ratios.push(x.raw.price / x.carpet_area / m);
+      }
+      byContact.set(x.raw.posted_by_contact, e);
+    }
+    const ring = new Set(flags?.fakeContacts ?? []);
+    const contactPts = [...byContact.entries()]
+      .filter(([, e]) => e.n >= 3 && e.ratios.length)
+      .map(([contact, e]) => ({
+        x: e.ver / e.n,
+        y: median(e.ratios),
+        r: ring.has(contact) ? 6 : 3.2,
+        id: contact,
+        group: ring.has(contact) ? "the seven flagged numbers" : "every other contact",
+        color: ring.has(contact) ? "#c98a3c" : "#4a5563",
+      }));
+
+    return { corrected, uncorrected, projPts, contactPts };
+  }, [c, manifest, flags, projects.rows]);
 
   return (
     <div className="page">
@@ -173,6 +248,65 @@ export default function Insights() {
               body={`${inrExact(Math.round(stats.meanPps2Bhk))} per sqft, after converting the square-metre records and excluding the impossible and non-genuine ones. Skipping any of those three corrections moves this number by more than 60%.`}
             />
           </div>
+
+          {charts ? (
+            <>
+              <h2>The three that changed an answer</h2>
+
+              <section className="chart-block">
+                <h3>Square metres hiding inside square feet</h3>
+                <p className="sub">
+                  Rupees per square foot for live two-bedroom listings, computed
+                  both ways. The 333 records that state area in square metres sit
+                  a factor of ten out on the raw reading, and they drag the mean
+                  63.7% above where it belongs.
+                </p>
+                <Histogram
+                  xLabel="rupees per square foot of carpet area"
+                  series={[
+                    { label: "as the API returns it", values: charts.uncorrected, color: "#c9584e" },
+                    { label: "after converting the square-metre records", values: charts.corrected, color: "#4da3a3" },
+                  ]}
+                  format={(v) => Math.round(v).toLocaleString("en-IN")}
+                />
+              </section>
+
+              <section className="chart-block">
+                <h3>Two units in one column</h3>
+                <p className="sub">
+                  Each dot is a project: what <code>price_max</code> stores,
+                  against the highest price its own listings actually carry. One
+                  unit would put every dot on one band. There are two, two orders
+                  of magnitude apart, and which band a project falls in is decided
+                  by whether its stored value is under 10. This plot is what
+                  caught my first answer to the costliest-project question, which
+                  was wrong by a factor of 26.
+                </p>
+                <LogScatter
+                  points={charts.projPts}
+                  xLabel="value stored in price_max"
+                  yLabel="highest price among the project's own listings"
+                />
+              </section>
+
+              <section className="chart-block">
+                <h3>Why is_verified is the wrong signal</h3>
+                <p className="sub">
+                  Every phone number with three or more listings, placed by how
+                  much of its portfolio is verified and how its prices compare
+                  with the median for the same locality and size. The market sits
+                  around the dashed line at 60% verified. The seven flagged
+                  numbers sit in the corner no honest agent occupies: fully
+                  verified, and every listing well below the local rate.
+                </p>
+                <Scatter2D
+                  points={charts.contactPts}
+                  xLabel="share of that number's listings marked is_verified"
+                  yLabel="median price per sqft, against the local median"
+                />
+              </section>
+            </>
+          ) : null}
         </>
       ) : null}
     </div>
